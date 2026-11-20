@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scheme Finder: government schemes you may qualify for</title>
+<link rel="stylesheet" href="base.css">
+<style>
+:root{--accent:#8a3b12;--accent-soft:#f7e8dd}
+.wrap{max-width:620px}.chips{display:flex;gap:6px;flex-wrap:wrap}.chips button{min-height:32px;padding:4px 10px;font-size:13px;border-radius:99px}
+.fact{display:inline-flex;gap:6px;align-items:center;background:var(--accent-soft);color:var(--accent);border-radius:99px;padding:3px 6px 3px 10px;font-size:13px;margin:3px 4px 3px 0}
+.fact button{min-height:22px;padding:0 6px;border:0;background:transparent;color:inherit}
+.res h3{font-size:16px}.res ul{margin:6px 0;padding-left:0;list-style:none}.res li{padding-left:22px;position:relative;font-size:14px}
+.res li:before{position:absolute;left:0}.res li.y:before{content:"\2713";color:var(--ok)}.res li.n:before{content:"\2717";color:var(--bad)}.res li.q:before{content:"?";color:var(--warn);font-weight:700}
+.q-card{border-color:var(--accent)}.group{margin-top:18px}details summary{cursor:pointer;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="concept">Concept prototype for a product case study. Not a government service. Always confirm on the official scheme website.</div>
+<div class="wrap">
+  <header class="top"><div><h1>Scheme Finder</h1><small>Tell us about yourself in your own words. We ask only what we still need.</small></div></header>
+
+  <div class="card">
+    <label for="say">About you, or the family member you are asking for (English, Hindi or Hinglish)</label>
+    <textarea id="say" placeholder="e.g. Main 45 saal ka kisan hoon, mere paas 3 bigha zameen hai"></textarea>
+    <div class="chips" style="margin:8px 0"><span class="muted">Try:</span>
+      <button data-s="I am a 34 year old farmer in Bihar. I own 2 acres of land. My family earns about 1.2 lakh a year and we don't pay income tax. I have a bank account.">Farmer</button>
+      <button data-s="Main 26 saal ki mahila hoon, ghar mein gas connection nahi hai, chulhe par khana banati hoon. BPL card hai.">Hinglish</button>
+      <button data-s="मेरी उम्र 30 साल है, मैं ठेले पर चाट बेचता हूँ। महीने की कमाई 10000 रुपये है।">हिंदी</button>
+    </div>
+    <div class="row"><button class="primary" id="go">Find schemes</button><button class="ghost" id="reset">Start over</button><small id="via"></small></div>
+  </div>
+
+  <div id="after" class="hidden">
+    <div class="card">
+      <h3>What we understood</h3>
+      <div id="facts"></div>
+      <small>Wrong? Tap × to remove it and we will ask instead.</small>
+    </div>
+    <div class="card q-card hidden" id="qCard">
+      <small id="qMeta"></small>
+      <p id="qText" style="font-weight:600;font-size:16px"></p>
+      <div class="row" id="qInput"></div>
+    </div>
+    <div id="results"></div>
+    <div class="card"><small><b>How this works:</b> an AI model only reads your sentence into the facts above. Fixed, published rules decide each result, so every tick and cross can be traced to a rule. Rules marked "not yet verified" have not been checked against the official page.</small></div>
+  </div>
+</div>
+
+<script src="schemes.js"></script>
+<script src="engine.js"></script>
+<script>
+const $ = id => document.getElementById(id), F = Finder;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const MAX_QUESTIONS = 5;
+let profile = {}, skipped = [], asked = 0;
+const events = []; const track = (name, data) => { events.push({ t: Date.now(), name, ...data }); window.__events = events; };
+
+document.querySelectorAll('.chips button').forEach(b => b.onclick = () => { $('say').value = b.dataset.s; });
+$('reset').onclick = () => { profile = {}; skipped = []; asked = 0; $('say').value = ''; $('via').textContent = ''; $('after').classList.add('hidden'); };
+$('go').onclick = async () => {
+  const text = $('say').value.trim(); let got = null, via;
+  $('via').textContent = 'Reading…';
+  if (text) {
+    try {
+      const r = await fetch('/api/gemini', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ system: F.EXTRACT_SYSTEM, user: text }) });
+      if (r.ok) { const j = await r.json(); if (j.json) { got = j.json; via = 'Read by the AI model.'; } }
+    } catch (e) {}
+    if (!got) { got = F.heuristicParse(text); via = 'AI model not connected: a simple keyword reader was used.'; }
+  }
+  profile = F.clean(got || {}); skipped = []; asked = 0; $('via').textContent = via || '';
+  track('profile_read', { fields: Object.keys(profile).length, via });
+  $('after').classList.remove('hidden'); render();
+};
+
+function fmt(k, v) { const f = F.FIELDS[k]; return f.label + ': ' + (f.type === 'bool' ? (v ? 'yes' : 'no') : k === 'annual_income' ? '₹' + Number(v).toLocaleString('en-IN') : String(v).replace(/_/g, ' ')); }
+function render() {
+  $('facts').innerHTML = Object.keys(profile).map(k => `<span class="fact">${esc(fmt(k, profile[k]))}<button aria-label="Remove ${esc(F.FIELDS[k].label)}" data-k="${k}">×</button></span>`).join('') || '<small>Nothing yet. Answer the questions below.</small>';
+  $('facts').querySelectorAll('button').forEach(b => b.onclick = () => { delete profile[b.dataset.k]; skipped = skipped.filter(x => x !== b.dataset.k); track('fact_removed', { field: b.dataset.k }); render(); });
+  renderQuestion(); renderResults();
+}
+function renderQuestion() {
+  const q = asked < MAX_QUESTIONS ? F.nextQuestion(profile, SCHEMES, skipped) : null;
+  $('qCard').classList.toggle('hidden', !q); if (!q) return;
+  $('qMeta').textContent = `Question ${asked + 1} of at most ${MAX_QUESTIONS} · this answer settles ${q.settles} scheme${q.settles > 1 ? 's' : ''}`;
+  $('qText').textContent = q.q;
+  const answer = v => { profile[q.field] = v; asked++; track('question_answered', { field: q.field }); render(); };
+  let h = '';
+  if (q.type === 'bool') h = '<button data-v="1">Yes</button><button data-v="0">No</button>';
+  if (q.type === 'choice') h = q.options.map(o => `<button data-v="${o}">${o.replace(/_/g, ' ')}</button>`).join('');
+  if (q.type === 'number') h = '<input id="qNum" type="number" min="0" inputmode="numeric" style="width:140px"><button id="qOk" class="primary">OK</button>';
+  h += '<button class="ghost" id="qSkip">Not sure</button>';
+  $('qInput').innerHTML = h;
+  $('qInput').querySelectorAll('[data-v]').forEach(b => b.onclick = () => answer(q.type === 'bool' ? b.dataset.v === '1' : b.dataset.v));
+  if (q.type === 'number') $('qOk').onclick = () => { const v = $('qNum').value; if (v !== '') answer(Number(v)); };
+  $('qSkip').onclick = () => { skipped.push(q.field); asked++; track('question_skipped', { field: q.field }); render(); };
+}
+const GROUPS = [['eligible', 'You qualify', 'ok'], ['likely', 'Likely, with a few things to confirm', 'acc'], ['unknown', 'Need one more detail', 'warn'], ['no', 'Not for you right now', '']];
+function renderResults() {
+  const res = F.evaluate(profile, SCHEMES); let h = '';
+  for (const [st, title, cls] of GROUPS) {
+    const list = res.filter(r => r.status === st); if (!list.length) continue;
+    const body = list.map(r => {
+      const s = r.scheme;
+      const checks = r.checks.filter(c => st !== 'no' || c.pass === false).map(c => `<li class="${c.pass === true ? 'y' : c.pass === false ? 'n' : 'q'}">${esc(c.text)}${c.pass === null ? ' <small>(not told yet)</small>' : ''}</li>`).join('');
+      const conf = st === 'no' ? '' : r.confirm.map(c => `<li class="q">${esc(c)}</li>`).join('');
+      return `<div class="card res"><div class="row"><h3 class="grow">${esc(s.name)}</h3><span class="pill ${cls}">${title.split(',')[0]}</span></div>
+        ${st === 'no' ? '' : `<p>${esc(s.benefit)}</p>`}<ul>${checks}${conf}</ul>
+        ${st === 'no' ? '' : `<small>Keep ready: ${esc(s.docs.join(', '))}</small><br><a href="${s.url}" target="_blank" rel="noopener">Official website</a> <span class="pill ${s.verified_on ? 'ok' : 'warn'}">${s.verified_on ? 'rules verified ' + s.verified_on : 'rules not yet verified'}</span>`}</div>`;
+    }).join('');
+    h += st === 'no' ? `<details class="group"><summary>${title} (${list.length})</summary>${body}</details>` : `<div class="group"><h2>${title} (${list.length})</h2>${body}</div>`;
+  }
+  $('results').innerHTML = h;
+}
+</script>
+</body>
+</html>
