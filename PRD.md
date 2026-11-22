@@ -24,19 +24,20 @@ Sources: https://www.myscheme.gov.in/about · https://en.vikaspedia.in/viewconte
 **The model reads; rules decide.** The model's only job is to turn a sentence into profile fields. Eligibility comes from fixed rules stored as data, so every tick and cross can be traced, tested and corrected by a non-engineer. If the model is unsure it must leave the field empty, and the product asks.
 
 ## 5. Flow
-1. Person types or speaks a few sentences.
-2. "What we understood" shows each fact as a chip. Tapping × removes a wrong one.
-3. The product asks the single question that settles the most undecided schemes, up to five, each with "Not sure".
-4. Results in four groups: You qualify · Likely, with things to confirm · Need one more detail · Not for you right now (collapsed, with the reason).
-5. Each result shows the benefit, the checks, documents to keep ready, the official link, and when the rule was last verified.
+1. Select English, Hindi or Hinglish. A skippable four-step tour appears on first visit and is reopenable from the header.
+2. Start a conversation for yourself or a family member, or load a realistic farmer example. An optional description reader fills facts; structured answers work without AI.
+3. Answer one question at a time, prioritised by missing checks across undecided schemes. Skip questions and revisit later. There is no five-question hard stop.
+4. Review and correct saved facts. Refresh restores profile, draft, language and conversation from localStorage. Reset clears saved work.
+5. Three visible states: Eligible (all checks match, no unresolved conditions, verified rules), Maybe (missing facts, extra conditions or unverified rules), Not eligible (a stored check fails). Reasons distinguish missing facts from other conditions. Negative cards are collapsible.
+6. Every card includes benefit, reasons, documents, official link and verification status. Keep a check-the-official-page note beside results. Source details remain in English; conversation and controls are translated.
 
 ## 6. Requirements
 P0
 - Free-text input in English, Hindi, Hinglish; editable facts.
-- Deterministic rules engine with four result states and reasons (`engine.js`, `schemes.js`).
-- Follow-up question picker that maximises schemes settled per question.
+- Deterministic rules engine with four internal states, three visible result states and reasons (`engine.js`, `schemes.js`).
+- Follow-up picker prioritising fields affecting the most undecided schemes; one answer is not guaranteed to settle them.
 - "Rules verified on" date per scheme; unverified rules are labelled.
-- Never say "you are eligible" for a rule with conditions the product cannot check; say "likely" and list what to confirm.
+- Only label a result Eligible when rules are verified and every condition is checked. Use Maybe for missing facts, unchecked conditions or unverified rules. Household income and tax facts cannot establish individual income or tax eligibility.
 P1
 - Voice input and read-aloud. State schemes. "Ask for someone else" mode.
 P2
@@ -61,7 +62,7 @@ P2
 ## 10. Risks
 - Stale rules. Mitigation: verified-on date, an owner per scheme, monthly re-check.
 - False hope. Mitigation: "Likely" state, official link, no promise language.
-- Sensitive data (caste, income). Mitigation: nothing is stored; facts live only in the page.
+- Sensitive data (caste, income). Mitigation: answers and drafts stay in localStorage on this device, with a saved status and Reset. Optional descriptions go to the server-side reader and Gemini; direct answers stay local. Never request identity or account numbers.
 - Scam look-alikes. Mitigation: only official government links; never collect Aadhaar or bank details.
 
 ## 11. Research script (15 minutes)

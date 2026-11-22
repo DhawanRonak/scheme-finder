@@ -14,12 +14,14 @@ export async function onRequestPost({ request, env }) {
   if (!key || !model) return reply({ error: 'Set GEMINI_API_KEY and GEMINI_MODEL' }, 500);
   let body;
   try { body = await request.json(); } catch (e) { return reply({ error: 'Send JSON' }, 400); }
-  const system = String(body.system || ''), user = String(body.user || '');
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return reply({ error: 'Send a JSON object' }, 400);
+  const system = typeof body.system === 'string' ? body.system : '', user = typeof body.user === 'string' ? body.user.trim() : '';
   if (!user || user.length > 4000 || system.length > 8000) return reply({ error: 'Bad input' }, 400);
   try {
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+      signal: AbortSignal.timeout(15000),
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: system }] },
         contents: [{ role: 'user', parts: [{ text: user }] }],

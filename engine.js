@@ -24,7 +24,7 @@
   };
   const known = v => v !== undefined && v !== null && v !== '';
   function test(profile, [field, op, val]) {
-    const v = profile[field];
+    const v = clean(profile)[field];
     if (!known(v)) return null; // unknown
     switch (op) {
       case 'is': return v === val;
@@ -48,7 +48,7 @@
     return Object.assign({ scheme: s }, best);
   }
   function evaluate(profile, schemes) {
-    return schemes.map(s => evalScheme(profile, s)).sort((a, b) => RANK[a.status] - RANK[b.status]);
+    return schemes.map(s => evalScheme(clean(profile), s)).sort((a, b) => RANK[a.status] - RANK[b.status]);
   }
   // Pick the follow-up question that can settle the most undecided schemes.
   function nextQuestion(profile, schemes, skipped) {
@@ -61,11 +61,13 @@
   // ---- Offline keyword reader (English, Hinglish, Hindi). A baseline for the eval, and a fallback
   // when the model is not connected. It only fills a field when it finds explicit evidence.
   function heuristicParse(text) {
-    let t = ' ' + text.toLowerCase().replace(/,/g, '') + ' ';
+    let t = ' ' + String(text || '').toLowerCase().replace(/[\u0966-\u096f]/g, n => n.charCodeAt(0)-0x0966).replace(/,/g, '') + ' ';
+    // Separate relatives? occupations from the applicant?s facts.
+    t = t.replace(/(?:my husband|my wife|my son|my father|my mother)\s+(?:is|works as)[^.\u0964]*/g, ' ');
     const p = {}, has = re => re.test(t);
     const girl = t.match(/(?:daughter|beti|बेटी)\D{0,12}(\d{1,2})\s*(?:years?|saal|साल)/);
     if (girl) { if (Number(girl[1]) < 10) p.has_girl_child_under_10 = true; t = t.replace(girl[0], ' '); }
-    const age = t.match(/(\d{1,2})\s*(?:years?|yrs?|saal|साल|वर्ष)/) || t.match(/(?:i am|i'm|umar|उम्र)\D{0,12}(\d{1,2})\b/);
+    const age = t.match(/\b(\d{1,3})\s*(?:years?|yrs?|saal|साल|वर्ष)/) || t.match(/(?:i am|i'm|umar|उम्र)\D{0,12}(\d{1,2})\b/);
     if (age) p.age = Number(age[1]);
     const lakh = t.match(/(\d+(?:\.\d+)?)\s*(?:lakh|lac|लाख)/);
     const monthA = t.match(/(\d{4,6})\s*(?:rs\.?|rupees|रुपये)?\s*(?:per month|a month|monthly)/), monthB = t.match(/(?:mahine|महीने)\D{0,18}(\d{4,6})/);
@@ -77,16 +79,18 @@
       ['unorganised_worker', /\b(labourer|laborer|mazdoor|construction|domestic worker)\b|मज़दूर/], ['student', /\b(student|bsc|b\.a|college)\b|छात्र/],
       ['salaried', /\b(engineer|salaried|office job|naukri)\b/], ['retired', /\bretired\b/], ['homemaker', /\b(homemaker|housewife|ghar sambhal)/]];
     for (const [name, re] of occ) if (has(re)) { p.occupation = name; break; }
-    if (has(/\b(acre|acres|bigha|zameen)\b|एकड़|खेत|ज़मीन/)) p.owns_farmland = true;
-    if (has(/(no|don'?t have a?) bank account/)) p.has_bank_account = false; else if (has(/bank account|jan dhan|बैंक खाता/)) p.has_bank_account = true;
+    if (has(/no (?:farm)?land|do not own (?:any )?land|zameen nahi|\u091c\u093c\u092e\u0940\u0928 \u0928\u0939\u0940\u0902/)) p.owns_farmland = false;
+    else if (has(/\b(acre|acres|bigha|zameen)\b|एकड़|खेत|ज़मीन/)) p.owns_farmland = true;
+    if (has(/(?:no bank account|(?:do not|don'?t) have (?:a )?bank account|bank account nahi)/)) p.has_bank_account = false; else if (has(/bank account|jan dhan|बैंक खाता/)) p.has_bank_account = true;
     if (has(/(don'?t|do not|no) (pay )?income tax|tax nahi/)) p.income_tax_payer = false; else if (has(/pay income tax/)) p.income_tax_payer = true;
     if (has(/\bno pf\b|pf nahi/)) p.epfo_member = false;
     if (has(/gas connection nahi|no (gas|lpg)|chulhe|चूल्हे/)) p.has_lpg = false;
     if (has(/kutcha|kachcha|कच्चा/)) p.has_pucca_house = false;
     if (has(/\bsc\b|scheduled caste|अनुसूचित जाति/)) p.category = 'sc';
-    if (has(/\bbpl\b/)) p.bpl = true;
+    if (has(/no bpl|not bpl|bpl (?:card )?nahi|\u092c\u0940\u092a\u0940\u090f\u0932 \u0928\u0939\u0940\u0902/)) p.bpl = false;
+    else if (has(/\bbpl\b|\u092c\u0940\u092a\u0940\u090f\u0932/)) p.bpl = true;
     if (p.occupation === 'student' && has(/bsc|b\.a|college|बी\.ए/)) p.post_matric_student = true;
-    return p;
+    return clean(p);
   }
   const EXTRACT_SYSTEM = 'You read what a person in India says about themselves, or about a family member they are asking for, in English, Hindi or Hinglish. '
     + 'Return only a JSON object using these optional keys: ' + Object.entries(FIELDS).map(([k, f]) => `${k} (${f.type === 'choice' ? f.options.join('|') : f.type === 'bool' ? 'true|false' : 'number'})`).join(', ')
@@ -97,11 +101,16 @@
     for (const k in FIELDS) {
       const v = p ? p[k] : undefined, f = FIELDS[k];
       if (!known(v)) continue;
-      if (f.type === 'number' && isFinite(Number(v))) out[k] = Number(v);
+      if (f.type === 'number' && (typeof v === 'number' || (typeof v === 'string' && v.trim() !== '')) && Number.isFinite(Number(v)) && Number(v) >= 0 && Number(v) <= (k === 'age' ? 120 : 1000000000) && Number.isInteger(Number(v))) out[k] = Number(v);
       if (f.type === 'bool' && typeof v === 'boolean') out[k] = v;
       if (f.type === 'choice' && f.options.includes(v)) out[k] = v;
     }
     return out;
   }
-  return { FIELDS, evaluate, nextQuestion, heuristicParse, EXTRACT_SYSTEM, clean };
+  function resultStatus(result) {
+    if (result.status === 'no') return 'no';
+    if (result.status === 'eligible' && result.scheme.verified_on) return 'eligible';
+    return 'maybe';
+  }
+  return { resultStatus, FIELDS, evaluate, nextQuestion, heuristicParse, EXTRACT_SYSTEM, clean };
 });
